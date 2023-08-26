@@ -1,0 +1,34 @@
+services:
+  cassandra1:
+    container_name: cassandra1
+    image: cassandra
+    hostname: cassandra1
+    ports:
+      - '9052:9042'
+      - '7000:7000'
+      - '7199:7199'
+    environment:
+      CASSANDRA_CLUSTER_NAME: mycluster
+    volumes:
+      - /home/azureuser/docker-work/dockerDB/cassandra-cluster/node1:/var/lib/cassandra
+    networks:
+      - cassandra-net
+  cassandra2:
+    container_name: cassandra2
+    image: cassandra
+    depends_on: 
+      - cassandra1
+    environment:
+      CASSANDRA_CLUSTER_NAME: mycluster
+      CASSANDRA_SEEDS: cassandra1
+    ports:
+      - '9053:9042'
+      - '7001:7000'
+      - '7198:7199'
+    volumes:
+      - /home/azureuser/docker-work/dockerDB/cassandra-cluster/node2:/var/lib/cassandra
+    networks:
+      - cassandra-net
+networks:
+  cassandra-net:
+    driver: bridge

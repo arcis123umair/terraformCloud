@@ -1,0 +1,156 @@
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "=3.70.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+  subscription_id = "{{.SubscriptionId}}"
+  client_id       = "{{.ClientId}}"
+  client_secret   = "{{.ClientSecret}}"
+  tenant_id       = "{{.TenantId}}"
+}
+
+resource "azurerm_resource_group" "RG" {
+  location = "{{.Location}}"
+  name     = "{{.ResourceGroup}}"
+}
+
+# Create virtual network
+resource "azurerm_virtual_network" "vm1_vnet" {
+  name                = "{{.VirtualNetworkName}}"
+  address_space       = ["{{.VirtualNetworkAddressSpace}}"]
+  location            = azurerm_resource_group.RG.location
+  resource_group_name = azurerm_resource_group.RG.name
+}
+
+# Create subnet
+resource "azurerm_subnet" "vm1_subnet" {
+  name                 = "{{.SubnetName}}"
+  resource_group_name  = azurerm_resource_group.RG.name
+  virtual_network_name = azurerm_virtual_network.vm1_vnet.name
+  address_prefixes     = ["{{.SubnetAddress}}"]
+}
+
+# Create public IPs
+resource "azurerm_public_ip" "vm1_public_ip" {
+  name                = "{{.PublicIpName}}"
+  location            = azurerm_resource_group.RG.location
+  resource_group_name = azurerm_resource_group.RG.name
+  allocation_method   = "Dynamic"
+}
+
+
+# Create Network Security Group and rule
+resource "azurerm_network_security_group" "vm1_nsg" {
+  name                = "{{.NetworkSecurityGroupName}}"
+  location            = azurerm_resource_group.RG.location
+  resource_group_name = azurerm_resource_group.RG.name
+
+  {{ range .AzureNetworkSecurity}}
+  security_rule {
+    name                       = "{{.SecurityName}}"
+    priority                   = {{.SecurityPriority}}
+    direction                  = "{{.SecurityDirection}}"            #Choose between inbound/outbound
+    access                     = "{{.SecurityAccess}}"
+    protocol                   = "{{.Protocol}}"
+    source_port_range          = "*"
+    destination_port_range     = "{{.DestinationPort}}"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  {{ end }}
+}
+
+# Create network interface
+resource "azurerm_network_interface" "vm1_nic" {
+  name                = "{{.NetworkInterfaceName}}"
+  location            = azurerm_resource_group.RG.location
+  resource_group_name = azurerm_resource_group.RG.name
+
+  ip_configuration {
+    name                          = "my_nic_configuration"
+    subnet_id                     = azurerm_subnet.vm1_subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.vm1_public_ip.id
+  }
+}
+
+# Connect the security group to the network interface
+resource "azurerm_network_interface_security_group_association" "example" {
+  network_interface_id      = azurerm_network_interface.vm1_nic.id
+  network_security_group_id = azurerm_network_security_group.vm1_nsg.id
+}
+
+# Generate random text for a unique storage account name
+resource "random_id" "random_id" {
+  keepers = {
+    # Generate a new ID only when a new resource group is defined
+    resource_group = azurerm_resource_group.RG.name
+  }
+
+  byte_length = 8
+}
+
+# Create storage account for boot diagnostics
+resource "azurerm_storage_account" "vm1_storage_account" {
+  name                     = "diag${random_id.random_id.hex}"
+  location                 = azurerm_resource_group.RG.location
+  resource_group_name      = azurerm_resource_group.RG.name
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+
+# Create virtual machine
+resource "azurerm_windows_virtual_machine" "vm1" {
+  name                  = "{{.VMName}}"
+  location              = azurerm_resource_group.RG.location
+  resource_group_name   = azurerm_resource_group.RG.name
+  network_interface_ids = [azurerm_network_interface.vm1_nic.id]
+  size                  = "Standard_B2s"
+
+  os_disk {
+    name                 = "myOsDisk"
+    caching              = "ReadWrite"
+    storage_account_type = "Premium_LRS"
+  }
+
+  source_image_reference {
+    publisher = "{{.VmPublisher}}"
+    offer     = "{{.VmOffer}}"
+    sku       = "{{.VmSku}}"
+    version   = "{{.VmVersion}}"
+  }
+
+  computer_name                   = "{{.Hostname}}"
+  admin_username                  = "{{.AdminUser}}"
+  admin_password                  = "{{.AdminPassword}}"
+  disable_password_authentication = false
+
+
+  boot_diagnostics {
+    storage_account_uri = azurerm_storage_account.vm1_storage_account.primary_blob_endpoint
+  }
+}
+
+
+
+#Output
+
+output "resource_group_name" {
+  value = azurerm_resource_group.RG.name
+}
+
+output "public_ip_address" {
+  value = azurerm_windows_virtual_machine.vm1.public_ip_address
+}
+
+output "location" {
+  description = "The Azure region"
+  value       = azurerm_resource_group.RG.location
+}

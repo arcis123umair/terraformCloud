@@ -1,0 +1,104 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region     = "{{.Region}}"
+  access_key = "{{.AccessKey}}"
+  secret_key = "{{.SecretKey}}"
+}
+
+
+resource "aws_instance" "{{.AwsInstance.ResourceName}}" {
+  ami                    = "{{.AwsInstance.InstanceImage}}"
+  instance_type          = "{{.AwsInstance.InstanceType}}"
+  subnet_id = aws_subnet.{{.AwsSubnet.SubnetResourceName}}.id
+  associate_public_ip_address = true
+  vpc_security_group_ids = [aws_security_group.{{.AwsSecurityGroupResourceName}}.id]
+  tags = {
+    "{{.AwsInstance.InstanceFirstTag}}" = "{{.AwsInstance.InstanceSecondTag}}"
+  }
+   depends_on = [ aws_security_group.{{.AwsSecurityGroupResourceName}} ]
+}
+
+resource "aws_vpc" "{{.AwsVpc.VpcResourceName}}" {
+  cidr_block = "{{.AwsVpc.VpcCidrBlock}}"
+
+  tags = {
+    "{{.AwsVpc.VpcFirstTag}}" = "{{.AwsVpc.VpcSecondTag}}"
+  }
+}
+
+resource "aws_subnet" "{{.AwsSubnet.SubnetResourceName}}" {
+  vpc_id            = aws_vpc.{{.AwsVpc.VpcResourceName}}.id
+  cidr_block        = "{{.AwsSubnet.SubnetCidrBlock}}"
+  availability_zone = "{{.AwsSubnet.SubnetAvailabilityZone}}"
+
+  tags = {
+    "{{.AwsSubnet.SubnetFirstTag}}" = "{{.AwsSubnet.SubnetSecondTag}}"
+  }
+}
+
+resource "aws_security_group" "{{.AwsSecurityGroupResourceName}}" {
+  name = "{{.AwsSecurityGroupName}}"
+  description = "This security group created using terraform"
+  vpc_id = aws_vpc.{{.AwsVpc.VpcResourceName}}.id
+
+  // To Allow SSH Transport
+  ingress {
+    from_port = 22
+    protocol = "tcp"
+    to_port = 22
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  #Outgoing traffic
+   egress {
+     from_port = 0
+     protocol = "-1"
+     to_port = 0
+     cidr_blocks = ["0.0.0.0/0"]
+   }
+
+  {{ range .AwsIncomingNetworkSecurity }}
+  ingress {
+    from_port = {{.FromPort}}
+    protocol = "{{.Protocol}}"
+    to_port = {{.ToPort}}
+    cidr_blocks = ["{{.CidrBlock}}"]
+  }
+  {{ end }}
+
+  {{ range .AwsOutgoingNetworkSecurity }}
+  egress {
+    from_port       = {{.FromPort}}
+    to_port         = {{.ToPort}}
+    protocol        = "-1"
+    cidr_blocks     = ["{{.CidrBlock}}"]
+  }
+  {{ end }}
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+
+//Displaying output for the created instance
+
+output "instance_id" {
+    value = "${element(aws_instance.{{.AwsInstance.InstanceResourceName}}.*.id, 0)}"
+}
+
+output "instance_ipv4" {
+    value = "${element(aws_instance.{{.AwsInstance.InstanceResourceName}}.*.public_ip, 0)}"
+}
+
+output "instance_state" {
+    value = "${element(aws_instance.{{.AwsInstance.InstanceResourceName}}.*.instance_state, 0)}"
+}

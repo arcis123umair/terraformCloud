@@ -1,0 +1,138 @@
+# provider details
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+# login with aws credentials
+
+provider "aws" {
+  region     = "{{.Region}}"
+  access_key = "{{.AccessKey}}"
+  secret_key = "{{.SecretKey}}"
+}
+
+# resources block to configure infrastructure
+
+resource "aws_instance" "{{.AwsInstance.ResourceName}}" {
+  ami                    = "{{.AwsInstance.InstanceImage}}"
+  instance_type          = "{{.AwsInstance.InstanceType}}"
+  key_name        = aws_key_pair.{{.AwsKeyId}}.key_name
+  security_groups = ["{{.AwsSecurityGroupName}}"]
+  tags = {
+    "{{.AwsInstance.InstanceFirstTag}}" = "{{.AwsInstance.InstanceSecondTag}}"
+  }
+
+  connection {
+    user        = "{{.Hostname}}"
+    host        = self.public_ip
+    type        = "ssh"
+    private_key = file("${path.module}/id_rsa")
+  }
+
+  provisioner "file" {
+    source      = "docker-install.sh"
+    destination = "/tmp/docker-install.sh"
+  }
+
+  provisioner "file" {
+    source      = "dockerData"
+    destination = "/tmp/dockerData"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo chmod +x /tmp/docker-install.sh",
+      "/tmp/docker-install.sh",
+      "sudo docker compose -f /home/{{.Hostname}}/docker-work/dockerDB/docker-compose.yaml up -d"
+    ]
+  }
+}
+
+
+resource "aws_key_pair" "{{.AwsKeyId}}" {
+  key_name   = "{{.AwsKeyName}}"
+  public_key = file("${path.module}/id_rsa.pub")
+}
+
+resource "aws_vpc" "{{.AwsVpc.VpcResourceName}}" {
+  cidr_block           = "{{.AwsVpc.VpcCidrBlock}}"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+  tags = {
+    "{{.AwsVpc.VpcFirstTag}}" = "{{.AwsVpc.VpcSecondTag}}"
+  }
+}
+
+resource "aws_internet_gateway" {{.AwsInternetGatewayName}} {
+  vpc_id = aws_vpc.{{.AwsVpc.VpcName}}.id
+}
+
+resource "aws_subnet" "{{.AwsSubnet.SubnetResourceName}}" {
+  vpc_id                  = aws_vpc.{{.AwsVpc.VpcResourceName}}.id
+  cidr_block              = "{{.AwsSubnet.SubnetCidrBlock}}"
+  availability_zone       = "{{.AwsSubnet.SubnetAvailabilityZone}}"
+  map_public_ip_on_launch = true
+  depends_on              = [aws_internet_gateway.{{.AwsInternetGatewayName}}]
+
+  tags = {
+    "{{.AwsSubnet.SubnetFirstTag}}" = "{{.AwsSubnet.SubnetSecondTag}}"
+  }
+}
+
+resource "aws_security_group" "{{.AwsSecurityGroupResourceName}}" {
+  name = "{{.AwsSecurityGroupName}}"
+
+  #Incoming traffic
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  #Outgoing traffic
+  egress {
+    from_port   = 0
+    protocol    = "-1"
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  {{ range .AwsIncomingNetworkSecurity }}
+  ingress {
+    from_port   = {{.FromPort}}
+    to_port     = {{.ToPort}}
+    protocol    = "{{.Protocol}}"
+    cidr_blocks = ["{{.CidrBlock}}"]
+  }
+  {{ end }}
+
+
+  {{ range .AwsOutgoingNetworkSecurity }}
+  egress {
+    from_port   = {{.FromPort}}
+    to_port     = {{.ToPort}}
+    protocol    = "-1"
+    cidr_blocks = ["{{.CidrBlock}}"]
+  }
+  {{ end }}
+}
+
+
+output "instance_id" {
+    value = "${element(aws_instance.{{.AwsInstance.ResourceName}}.*.id, 0)}"
+}
+
+output "instance_ipv4" {
+    value = "${element(aws_instance.{{.AwsInstance.ResourceName}}.*.public_ip, 0)}"
+}
+
+output "instance_state" {
+    value = "${element(aws_instance.{{.AwsInstance.ResourceName}}.*.instance_state, 0)}"
+}

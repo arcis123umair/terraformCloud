@@ -1,0 +1,157 @@
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "=3.70.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+  subscription_id = "{{.SubscriptionId}}"
+  client_id       = "{{.ClientId}}"
+  client_secret   = "{{.ClientSecret}}"
+  tenant_id       = "{{.TenantId}}"
+}
+
+resource "azurerm_resource_group" "{{.AzureResourceGroup.ResourceName}}" {
+  location = "{{.AzureResourceGroup.Location}}"
+  name     = "{{.AzureResourceGroup.ResourceGroup}}"
+}
+
+# Create virtual network
+resource "azurerm_virtual_network" "{{.AzureVirtualNetwork.ResourceName}}" {
+  name                = "{{.AzureVirtualNetwork.VirtualNetworkName}}"
+  address_space       = ["{{.AzureVirtualNetwork.VirtualNetworkAddressSpace}}"]
+  location            = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.location
+  resource_group_name = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+}
+
+# Create subnet
+resource "azurerm_subnet" "{{.AzureSubnet.ResourceName}}" {
+  name                 = "{{.AzureSubnet.SubnetName}}"
+  resource_group_name  = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+  virtual_network_name = azurerm_virtual_network.{{.AzureVirtualNetwork.ResourceName}}.name
+  address_prefixes     = ["{{.AzureSubnet.SubnetAddress}}"]
+}
+
+# Create public IPs
+resource "azurerm_public_ip" "{{.AzurePublicIp.ResourceName}}" {
+  name                = "{{.AzurePublicIp.PublicIpName}}"
+  location            = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.location
+  resource_group_name = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+  allocation_method   = "{{.AzurePublicIp.PublicIpAllocationMethod}}"
+}
+
+
+# Create Network Security Group and rule
+resource "azurerm_network_security_group" "{{.AzureNetworkSecurityGroup.ResourceName}}" {
+  name                = "{{.AzureNetworkSecurityGroup.NetworkSecurityGroupName}}"
+  location            = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.location
+  resource_group_name = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+
+  {{ range .AzureNetworkSecurity}}
+  security_rule {
+    name                       = "{{.SecurityName}}"
+    priority                   = {{.SecurityPriority}}
+    direction                  = "{{.SecurityDirection}}"            #Choose between inbound/outbound
+    access                     = "{{.SecurityAccess}}"
+    protocol                   = "{{.Protocol}}"
+    source_port_range          = "*"
+    destination_port_range     = "{{.DestinationPort}}"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+  {{ end }}
+}
+
+# Create network interface
+resource "azurerm_network_interface" "{{.AzureNetworkInterface.ResourceName}}" {
+  name                = "{{.AzureNetworkInterface.NetworkInterfaceName}}"
+  location            = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.location
+  resource_group_name = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+
+  ip_configuration {
+    name                          = "my_nic_configuration"
+    subnet_id                     = azurerm_subnet.{{.AzureSubnet.ResourceName}}.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.{{.AzurePublicIp.ResourceName}}.id
+  }
+}
+
+# Connect the security group to the network interface
+resource "azurerm_network_interface_security_group_association" "{{.AzureNetworkInterface.SecurityGroupResourceName}}"  {
+  network_interface_id      = azurerm_network_interface.{{.AzureNetworkInterface.ResourceName}}.id
+  network_security_group_id = azurerm_network_security_group.{{.AzureNetworkSecurityGroup.ResourceName}}.id
+}
+
+
+# Create virtual machine
+resource "azurerm_linux_virtual_machine" "{{.AzureLinuxVirtualMachine.ResourceName}}" {
+  name                  = "{{.AzureLinuxVirtualMachine.VmName}}"
+  location              = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.location
+  resource_group_name   = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+  network_interface_ids = [azurerm_network_interface.{{.AzureNetworkInterface.ResourceName}}.id]
+  size                  = "{{.AzureLinuxVirtualMachine.VmSize}}"
+
+  os_disk {
+    name                 = "myOsDisk"
+    caching              = "ReadWrite"
+    storage_account_type = "Premium_LRS"
+  }
+
+  source_image_reference {
+    publisher = "{{.AzureLinuxVirtualMachine.VmPublisher}}"
+    offer     = "{{.AzureLinuxVirtualMachine.VmOffer}}"
+    sku       = "{{.AzureLinuxVirtualMachine.VmSku}}"
+    version   = "{{.AzureLinuxVirtualMachine.VmVersion}}"
+  }
+
+  computer_name                   = "{{.AzureLinuxVirtualMachine.Hostname}}"
+  admin_username                  = "{{.AzureLinuxVirtualMachine.AdminUser}}"
+  admin_password                  = "{{.AzureLinuxVirtualMachine.AdminPassword}}"
+  disable_password_authentication = false
+
+  boot_diagnostics {
+      storage_account_uri = azurerm_storage_account.vm1_storage_account.primary_blob_endpoint
+  }
+}
+
+# Generate random text for a unique storage account name
+resource "random_id" "random_id" {
+  keepers = {
+    # Generate a new ID only when a new resource group is defined
+    resource_group = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+  }
+
+  byte_length = 8
+}
+
+# Create storage account for boot diagnostics
+resource "azurerm_storage_account" "vm1_storage_account" {
+  name                     = "diag${random_id.random_id.hex}"
+  location                 = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.location
+  resource_group_name      = azurerm_resource_group.{{.AzureResourceGroup.ResourceName}}.name
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+
+
+
+#Output
+
+output "resource_group_name" {
+  value = azurerm_resource_group.{{.AzureResourceGroupResourceName}}.name
+}
+
+output "public_ip_address" {
+  value = azurerm_linux_virtual_machine.vm1.public_ip_address
+}
+
+output "location" {
+  description = "The Azure region"
+  value       = azurerm_resource_group.{{.AzureResourceGroupResourceName}}.location
+}
+
